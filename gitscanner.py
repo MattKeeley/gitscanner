@@ -25,12 +25,10 @@ async def check_website(domain, protocol):
                         print(
                             f"[FOUND] python3 git_dumper.py {url.strip('/.git/config')} {domain}")
                         write_to_found(url)
-                else:
-                    raise Exception("Non-200 status code")
+                elif protocol == "https":
+                    await check_website(domain, 'http')
         except Exception as e:
             await asyncio.sleep(2)
-            if protocol == 'https':
-                await check_website(domain, 'http')
 
 
 async def main():
