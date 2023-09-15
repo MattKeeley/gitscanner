@@ -1,7 +1,6 @@
 import sys
 import aiohttp
 import asyncio
-import aiohttp
 
 
 def write_to_found(url):
@@ -15,30 +14,23 @@ def write_to_found(url):
 
 
 async def check_website(domain, protocol):
-    retries = 0
-    while retries < 1:
-        async with aiohttp.ClientSession() as session:
-            url = f"{protocol}://{domain}/.git/config"
-            try:
-                # print(f'Scanning domain: {domain}')
-                async with session.get(url, allow_redirects=False, ssl=True) as response:
-                    print(f'url: {url}, response: {response.status}')
-                    if response.status == 200:
-                        text = await response.text()
-                        if text.startswith('['):
-                            print(
-                                f"[FOUND] python3 git_dumper.py {url.strip('/.git/config')} {domain}")
-                            write_to_found(url)
-                        break
-                    elif protocol == 'https':
-                        protocol = 'http'  # Try HTTP if HTTPS failed
-                        continue
-                    else:
-                        break  # Request failed with HTTP, exit the retry loop
-            except Exception as e:
-                # print(f"Error accessing {url}: {e}")
-                retries += 1
-                await asyncio.sleep(2)
+    async with aiohttp.ClientSession() as session:
+        url = f"{protocol}://{domain}/.git/config"
+        try:
+            async with session.get(url, allow_redirects=False, ssl=True) as response:
+                print(f'url: {url}, response: {response.status}')
+                if response.status == 200:
+                    text = await response.text()
+                    if text.startswith('['):
+                        print(
+                            f"[FOUND] python3 git_dumper.py {url.strip('/.git/config')} {domain}")
+                        write_to_found(url)
+                else:
+                    raise Exception("Non-200 status code")
+        except Exception as e:
+            await asyncio.sleep(2)
+            if protocol == 'https':
+                await check_website(domain, 'http')
 
 
 async def main():
@@ -50,9 +42,7 @@ async def main():
         domains = [line.strip() for line in file.readlines()]
         print(f'Read input file: {sys.argv[1]}')
 
-    protocols = ['https', 'http']
-    tasks = [check_website(domain, protocol)
-             for domain in domains for protocol in protocols]
+    tasks = [check_website(domain, 'https') for domain in domains]
     for future in asyncio.as_completed(tasks):
         try:
             await future
