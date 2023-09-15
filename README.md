@@ -1,46 +1,48 @@
-# Git Scanner
+# GitScanner
 
-Git Scanner is a tool designed to scan a list of domains for exposed `.git` directories. It consists of two programs: `gitscanner` for scanning and `gitdumper` for extracting Git repositories.
+## WHAT
 
-## `gitscanner`
+GitScanner is a Python script that scans a list of domains to check if they have exposed Git repositories. It does this by attempting to access the `.git/config` file on each domain using both HTTP and HTTPS protocols. If a valid Git configuration file is found, it will be added to the "found.txt" file.
 
-`gitscanner` is used to scan a list of domains for exposed `.git` directories. It checks each domain for Git repository information and reports any findings.
+## HOW TO USE
+`Gitscanner` requires **Python 3+**. Python 2 is not supported. 
 
-### Usage
+This tool is run in 2 parts, usage is shown below:
 
-```bash
-python3 gitscanner.py input_file
+```console
+Usage:
+    ./python3 gitscanner.py input_file.txt    
+Install Dependencies:
+    pip3 install aiohttp
 ```
 
-- `input_file` should contain a list of domains, one per line.
-
-Example:
-
-```bash
-python3 gitscanner.py domains.txt
-```
-
-## `gitdumper`
-
-Once you have identified exposed Git directories using `gitscanner`, you can use `gitdumper` to clone and extract the contents of these repositories.
-
-### Usage
+Running `gitscanner.py` will output the results to the screen, and in a found.txt file. After `gitscanner.py` is finished running, you will need to run this bash 1-liner:
 
 ```bash
 while read -r line; do
-domain=$(echo "$line" | sed -E 's/^(http|https)://([^/]+).*/.git/config$/2/')
+  domain=$(echo "$line" | sed -E 's/^(http|https):\/\/([^/]+).*\/\.git\/config$/\2/')
   python3 gitdumper.py "${line%.git/config}" "$domain"
 done < found.txt
+```
+What does this 1-liner do? Well it uses the `gitdumper.py` file created by [arthaud](https://github.com/arthaud/git-dumper/blob/master/git_dumper.py) to download all of the files in the git repository for each domain in found.txt. 
 
+*(NOT REQUIRED)* If you would like to manually get the `.git` repository for a specific domain, you can use gitdumper independently like so:
+
+```console
+Usage:
+    ./python3 gitdumper.py https://domain.com folder    
+Install Dependencies:
+    pip3 install PySocks requests beautifulsoup4 dulwich
 ```
 
-This one-liner reads each line from `found.txt` produced by gitscanner.py, then extracts the domain, and uses `gitdumper` to clone the Git repository.
+## DISCLAIMER
 
----
+> This tool is only for testing and academic purposes and can only be used where
+> strict consent has been given. Do not use it for illegal purposes! It is the
+> end user’s responsibility to obey all applicable local, state and federal laws.
+> Developers assume no liability and are not responsible for any misuse or damage
+> caused by this tool and software.
 
-**Note**: Ensure that you have both `gitscanner` and `gitdumper` set up and configured properly before using them. Be responsible and use these tools only for legitimate and authorized purposes.
+## LICENSE
 
-For more information and contributions, please visit the respective repositories:
-
-- [gitdumper](https://github.com/arthaud/git-dumper/blob/master/git_dumper.py)
-
+This project is licensed under the Creative Commons Zero v1.0 Universal - see the [LICENSE](LICENSE) file for details
