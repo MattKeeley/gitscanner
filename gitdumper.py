@@ -18,11 +18,13 @@ import dulwich.objects
 import dulwich.pack
 import requests
 import socks
-
+import warnings
 
 """
 !!!! STOLEN FROM https://github.com/arthaud/git-dumper/blob/master/git_dumper.py !!!!
 """
+warnings.filterwarnings(
+    "ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 
 def printf(fmt, *args, file=sys.stdout):
@@ -247,13 +249,6 @@ class DownloadWorker(Worker):
                 timeout=timeout,
             )
         ) as response:
-            printf(
-                "[-] Fetching %s/%s [%d]\n",
-                url,
-                filepath,
-                response.status_code,
-            )
-
             valid, error_message = verify_response(response)
             if not valid:
                 printf(error_message, url, filepath, file=sys.stderr)
