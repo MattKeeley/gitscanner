@@ -1,51 +1,137 @@
-import sys
-import aiohttp
 import asyncio
+import aiohttp
+from itertools import islice
+import sys
+import re
+import time
+from colorama import Fore, Style
+from colorama import init as color_init
 
 
-def write_to_found(url):
+def log(line, output_type="info"):
+    types = {
+        "found": f"{Fore.GREEN}{Style.BRIGHT}[+]{Style.RESET_ALL} {line}",
+        "warning": f"{Fore.YELLOW}{Style.BRIGHT}[?]{Style.RESET_ALL} {line}",
+        "error": f"{Fore.RED}{Style.BRIGHT}[!]{Style.RESET_ALL} {line}",
+        "info": f"{Fore.WHITE}{Style.BRIGHT}[*]{Style.RESET_ALL} {line}",
+    }
+    print(types.get(output_type,
+          f"{Fore.WHITE}{Style.BRIGHT}[*]{Style.RESET_ALL} {line}"))
+
+
+async def write_to_found(url):
     try:
         with open('found.txt', 'a') as file:
             file.write(url + '\n')
     except FileNotFoundError:
-        # If the file doesn't exist, create it
         with open('found.txt', 'w') as file:
-            file.write(url + '\n')
+            await file.write(url + '\n')
 
 
-async def check_website(domain, protocol):
-    async with aiohttp.ClientSession() as session:
-        url = f"{protocol}://{domain}/.git/config"
-        try:
-            async with session.get(url, allow_redirects=False, ssl=True) as response:
-                print(f'url: {url}, response: {response.status}')
-                if response.status == 200:
-                    text = await response.text()
-                    if text.startswith('['):
-                        print(
-                            f"[FOUND] python3 git_dumper.py {url.strip('/.git/config')} {domain}")
-                        write_to_found(url)
-                elif protocol == "https":
-                    await check_website(domain, 'http')
-        except Exception as e:
-            await asyncio.sleep(2)
+def chunked_iterable(iterable, chunk_size):
+    it = iter(iterable)
+    while True:
+        chunk = list(islice(it, chunk_size))
+        if not chunk:
+            break
+        yield chunk
 
 
-async def main():
-    if len(sys.argv) != 2:
-        print("Usage: python3 gitscanner.py input_file")
-        return
+async def get_fetch_results(domains):
+    attributes = []
+    max_workers = 150
 
-    with open(sys.argv[1], 'r') as file:
-        domains = [line.strip() for line in file.readlines()]
-        print(f'Read input file: {sys.argv[1]}')
+    headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) '
+               'AppleWebKit/537.11 (KHTML, like Gecko) '
+               'Chrome/23.0.1271.64 Safari/537.11',
+               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+               'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.3',
+               'Accept-Encoding': 'none',
+               'Accept-Language': 'en-US,en;q=0.8',
+               'Connection': 'keep-alive'}
 
-    tasks = [check_website(domain, 'https') for domain in domains]
-    for future in asyncio.as_completed(tasks):
-        try:
-            await future
-        except asyncio.TimeoutError:
-            print("A task timed out.")
+    tcp_connection = aiohttp.TCPConnector(limit=max_workers)
+    async with aiohttp.ClientSession(connector=tcp_connection, headers=headers, timeout=25) as session:
+        for chunk in chunked_iterable(domains, max_workers):
+            results = await do_fetch_tasks(chunk, session)
+            attributes.extend(results)
+    await tcp_connection.close()
+    return attributes
+
+
+class timeit_context(object):
+    def __init__(self):
+        self.initial = None
+
+    def __enter__(self):
+        self.initial = time.time()
+
+    def __exit__(self, type_arg, value, traceback):
+        print('Total time elapsed {} sec'.format(
+            time.time() - self.initial))
+
+
+async def do_fetch_tasks(domains, session):
+    tasks = []
+
+    for domain in domains:
+        task = asyncio.ensure_future(fetch(domain, session=session))
+        tasks.append(task)
+
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def fetch(domain, session):
+    await asyncio.sleep(.250)
+    try:
+        async with session.get(f"https://{domain}/.git/config", timeout=25, ssl=False) as response:
+            if response.status == 200:
+                response_text = await response.text()
+                if response_text.startswith("["):
+                    log(
+                        f"[FOUND] python3 gitdumper.py https://{domain} {domain}", "found")
+                    await write_to_found(domain)
+                    return 999
+                return response.status
+            else:
+                log(f"[{response.status}] {domain}")
+                return response.status
+    except aiohttp.ClientOSError as error_message:
+        if 'Header value is too long' in str(error_message):
+            log(
+                f"[WARNING] Header value too long: {error_message}. URL : {domain}", "warning")
+        elif 'nodename nor servname provided, or not known' in str(error_message):
+            log(
+                f"[ERROR] Cannot connect to host {domain}: {error_message}", "error")
+        else:
+            log(
+                f"[WARNING] A ClientOSError occurred for domain {domain}: {error_message}", "warning")
+        return {}
+
+    except Exception as e:
+        log(
+            f"[ERROR] An unexpected error occurred for domain {domain}: {e}", "error")
+        return {}
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    with open(sys.argv[1], 'r') as file:
+        domains = [domain.strip() for domain in open(
+            sys.argv[1], 'r').readlines() if re.match(r"^[a-zA-Z0-9.-]+$", domain.strip())]
+        print(
+            f'Successfully read input file: {sys.argv[1]} with {len(domains)}/{len(file.readlines())} lines.')
+
+    with timeit_context():
+        loop = asyncio.get_event_loop()
+        fetch_attributes = loop.run_until_complete(
+            get_fetch_results(domains))
+        empty_dicts_count = sum(
+            1 for item in fetch_attributes if isinstance(item, dict) and not item)
+        non_empty_sets = len(domains) - empty_dicts_count
+
+        print(fetch_attributes)
+        log(f"Found {fetch_attributes.count(999)} git directories.", "warning")
+        log(f"200 Statuses: {fetch_attributes.count(200)}", "warning")
+        log(f"403 Statuses: {fetch_attributes.count(403)}", "warning")
+        log(f"404 Statuses: {fetch_attributes.count(404)}", "warning")
+        print(
+            f"Number of non-empty sets: {non_empty_sets}/{len(domains)}")
