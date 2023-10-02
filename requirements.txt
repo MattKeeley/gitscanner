@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+urllib3
+dulwich
+PySocks
+aiohttp
