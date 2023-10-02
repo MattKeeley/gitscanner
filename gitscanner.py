@@ -7,6 +7,8 @@ import time
 from colorama import Fore, Style
 from colorama import init as color_init
 
+color_init()
+
 
 def log(line, output_type="info"):
     types = {
@@ -67,8 +69,14 @@ class timeit_context(object):
         self.initial = time.time()
 
     def __exit__(self, type_arg, value, traceback):
-        print('Total time elapsed {} sec'.format(
-            time.time() - self.initial))
+        elapsed_time = time.time() - self.initial
+        if elapsed_time >= 60:
+            hours, remainder = divmod(elapsed_time, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            log('Total time elapsed: {} hours, {} minutes, {:.2f} seconds'.format(
+                int(hours), int(minutes), seconds))
+        else:
+            log('Total time elapsed: {:.2f} seconds'.format(elapsed_time))
 
 
 async def do_fetch_tasks(domains, session):
@@ -82,36 +90,44 @@ async def do_fetch_tasks(domains, session):
 
 
 async def fetch(domain, session):
-    await asyncio.sleep(.250)
-    try:
-        async with session.get(f"https://{domain}/.git/config", timeout=25, ssl=False) as response:
-            if response.status == 200:
-                response_text = await response.text()
-                if response_text.startswith("["):
-                    log(
-                        f"[FOUND] python3 gitdumper.py https://{domain} {domain}", "found")
-                    await write_to_found(domain)
-                    return 999
-                return response.status
+    for protocol in ["https://", "http://", "https://www.", "http://www."]:
+        await asyncio.sleep(.250)
+        try:
+            async with session.get(f"{protocol}{domain}/.git/config", timeout=25, ssl=False) as response:
+                if response.status == 200:
+                    response_text = await response.text()
+                    if response_text.startswith("["):
+                        log(
+                            f"[FOUND] python3 gitdumper.py {protocol}{domain} {domain}", "found")
+                        # check for .env
+                        async with session.get(f"{protocol}{domain}/.env", timeout=25, ssl=False) as env_response:
+                            if env_response.status == 200:
+                                log(
+                                    f"[FOUND - ENV] {protocol}{domain}/.env", "found")
+                                await write_to_found(f"{protocol}{domain}/.env")
+                                return 998
+                        await write_to_found(f"{protocol}{domain}/.git/config")
+                        return 999
+                    return response.status
+                else:
+                    log(f"[{response.status}] {protocol}{domain}/.git/config")
+                    return response.status
+        except aiohttp.ClientOSError as error_message:
+            if 'Header value is too long' in str(error_message):
+                log(
+                    f"[WARNING] Header value too long: {error_message}. URL : {protocol}{domain}", "warning")
+            elif 'nodename nor servname provided, or not known' in str(error_message):
+                log(
+                    f"[ERROR] Cannot connect to host {protocol}{domain}: {error_message}", "error")
             else:
-                log(f"[{response.status}] {domain}")
-                return response.status
-    except aiohttp.ClientOSError as error_message:
-        if 'Header value is too long' in str(error_message):
-            log(
-                f"[WARNING] Header value too long: {error_message}. URL : {domain}", "warning")
-        elif 'nodename nor servname provided, or not known' in str(error_message):
-            log(
-                f"[ERROR] Cannot connect to host {domain}: {error_message}", "error")
-        else:
-            log(
-                f"[WARNING] A ClientOSError occurred for domain {domain}: {error_message}", "warning")
-        return {}
+                log(
+                    f"[WARNING] A ClientOSError occurred for domain {protocol}{domain}: {error_message}", "warning")
+            return {}
 
-    except Exception as e:
-        log(
-            f"[ERROR] An unexpected error occurred for domain {domain}: {e}", "error")
-        return {}
+        except Exception as e:
+            log(
+                f"[ERROR] An unexpected error occurred for domain {protocol}{domain}: {e}", "error")
+            return {}
 
 if __name__ == "__main__":
     with open(sys.argv[1], 'r') as file:
@@ -129,9 +145,10 @@ if __name__ == "__main__":
         non_empty_sets = len(domains) - empty_dicts_count
 
         print(fetch_attributes)
-        log(f"Found {fetch_attributes.count(999)} git directories.", "warning")
+        log(f"Found {fetch_attributes.count(999)+fetch_attributes.count(998)} git directories.", "found")
+        log(f"Found {fetch_attributes.count(998)} .env files.", "found")
         log(f"200 Statuses: {fetch_attributes.count(200)}", "warning")
         log(f"403 Statuses: {fetch_attributes.count(403)}", "warning")
         log(f"404 Statuses: {fetch_attributes.count(404)}", "warning")
-        print(
+        log(
             f"Number of non-empty sets: {non_empty_sets}/{len(domains)}")
